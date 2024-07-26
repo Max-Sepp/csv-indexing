@@ -1,237 +1,113 @@
 package btree
 
-// have not refactored yet
-func (tree *Btree) Delete(key string) int64 {
-	var offset int64 = -1
+func (tree *Btree) Delete(key string) (int64, error) {
+	rowPtr, err := deleteHelper(tree, nil, tree.root, key)
 
-	balancingRequired := false
-	i := 0
-	if !has(tree.root.keys, key) {
-		if tree.root.leaf {
-			return -1 // handle error key not in tree error
-		}
-		i = 0
-		for i < len(tree.root.keys) && key > tree.root.keys[i].key {
-			i++
-		}
-		balancingRequired, offset = tree.deleteHelper(tree.root.child[i], key)
-	} else if tree.root.leaf {
-		tree.root.keys, offset = removeKeyFromSlice(tree.root.keys, key)
-	} else {
-		i = 0
-		for i < len(tree.root.child) && key != tree.root.keys[i].key {
-			i++
-		}
-
-		// find inorder predessecor and check if has more than minimum number of keys
-		inorderPredecessorNode := tree.root.child[i]
-		for !inorderPredecessorNode.leaf {
-			inorderPredecessorNode = inorderPredecessorNode.child[len(inorderPredecessorNode.child)-1]
-		}
-
-		if len(inorderPredecessorNode.keys) > tree.maxElements {
-			tree.root.keys[i] = inorderPredecessorNode.keys[len(inorderPredecessorNode.child)-1]
-			inorderPredecessorNode.keys = popFromSlice(inorderPredecessorNode.keys, len(inorderPredecessorNode.keys)-1)
-		} else if i < len(tree.root.child)-1 {
-			// find inorder successor
-			inorderSuccessorNode := tree.root.child[i+1]
-			for !inorderSuccessorNode.leaf {
-				inorderSuccessorNode = inorderSuccessorNode.child[0]
-			}
-
-			if len(inorderSuccessorNode.keys) > tree.minElements {
-				tree.root.keys[i] = inorderSuccessorNode.keys[0]
-				inorderSuccessorNode.keys = popFromSlice(inorderSuccessorNode.keys, 0)
-			} else {
-				tree.root.keys[i] = inorderSuccessorNode.keys[0]
-				balancingRequired, offset = tree.deleteHelper(tree.root.child[i+1], inorderSuccessorNode.keys[0].key)
-			}
-			i++ // changed where it was placed check here for likely bug
-		} else {
-			tree.root.keys[i] = inorderPredecessorNode.keys[len(inorderPredecessorNode.child)-1]
-			balancingRequired, offset = tree.deleteHelper(tree.root.child[i], inorderPredecessorNode.keys[len(inorderPredecessorNode.child)-1].key)
-		}
-	}
-	// root handling of breaking tree conditions
-	if balancingRequired {
-		// check left sibling
-		if i > 0 && len(tree.root.child[i-1].keys) > tree.minElements {
-			// rotating keys around to balance tree
-			tree.root.child[i].keys = insertIntoSlice(tree.root.child[i].keys, 0, tree.root.keys[i-1])
-			tree.root.keys[i-1] = tree.root.child[i-1].keys[len(tree.root.child[i-1].keys)-1]
-			tree.root.child[i-1].keys = popFromSlice(tree.root.child[i-1].keys, len(tree.root.child[i-1].keys)-1)
-
-			if !tree.root.child[i].leaf {
-				// handling child node
-				tree.root.child[i].child = insertIntoSlice(tree.root.child[i].child, 0, tree.root.child[i-1].child[len(tree.root.child[i-1].child)-1])
-				tree.root.child[i-1].child = popFromSlice(tree.root.child[i-1].child, len(tree.root.child[i-1].child)-1)
-			}
-
-		} else if i < len(tree.root.keys) && len(tree.root.child[i+1].keys) > tree.minElements {
-			// rotating keys around to balance tree
-			tree.root.child[i].keys = append(tree.root.child[i].keys, tree.root.keys[i])
-			tree.root.keys[i] = tree.root.child[i+1].keys[0]
-			tree.root.child[i+1].keys = popFromSlice(tree.root.child[i+1].keys, 0)
-
-			if !tree.root.child[i].leaf {
-				// handling child node
-				tree.root.child[i].child = append(tree.root.child[i].child, tree.root.child[i+1].child[0])
-				tree.root.child[i+1].child = popFromSlice(tree.root.child[i+1].child, 0)
-			}
-
-		} else {
-			if i > 0 {
-				tree.root.child[i-1].keys = append(tree.root.child[i-1].keys, tree.root.keys[i-1])
-				tree.root.keys = popFromSlice(tree.root.keys, i-1)
-				tree.root.child[i-1].keys = append(tree.root.child[i-1].keys, tree.root.child[i].keys...)
-
-				if !tree.root.child[i].leaf {
-					// handling children
-					tree.root.child[i-1].child = append(tree.root.child[i-1].child, tree.root.child[i].child...)
-				}
-
-				tree.root.child = popFromSlice(tree.root.child, i)
-			} else {
-				tree.root.child[i].keys = append(tree.root.child[i].keys, tree.root.keys[i])
-				tree.root.keys = popFromSlice(tree.root.keys, i)
-				tree.root.child[i].keys = append(tree.root.child[i].keys, tree.root.child[i+1].keys...)
-
-				if !tree.root.child[i].leaf {
-					// handling children
-					tree.root.child[i].child = append(tree.root.child[i].child, tree.root.child[i+1].child...)
-				}
-
-				tree.root.child = popFromSlice(tree.root.child, i+1)
-			}
-
-			if len(tree.root.keys) <= 0 {
-				tree.root = tree.root.child[0]
-			}
-		}
+	if err != nil {
+		return rowPtr, err
 	}
 
-	return offset
+	for len(tree.root.keys) == 0 && len(tree.root.child) != 0 {
+		tree.root = tree.root.child[0]
+	}
+
+	return rowPtr, err
 }
 
-func (tree *Btree) deleteHelper(treeNode *node, key string) (bool, int64) {
-	var offset int64 = -1
-	balancingRequired := false
-	i := 0
-	if !has(treeNode.keys, key) {
-		if treeNode.leaf {
-			return false, -1 // handle error future problem
-		}
-		i = 0
-		for i < len(treeNode.keys) && key > treeNode.keys[i].key {
-			i++
-		}
-		balancingRequired, offset = tree.deleteHelper(treeNode.child[i], key)
-	} else if treeNode.leaf {
-		treeNode.keys, offset = removeKeyFromSlice(treeNode.keys, key)
+func deleteHelper(tree *Btree, parentNode *node, currentNode *node, key string) (int64, error) {
+	var rowPtr int64 = -1
+	var indexOfChildNode int
+	var err error
 
-		// check if node is breaking the minElements rule
-		return len(treeNode.keys) < tree.minElements, offset
+	// This is either the location of the treeNode or the index of the child which should be checked next to find the treeNode
+	keyIndex := currentNode.findKeyIndex(key)
+
+	if parentNode != nil {
+		indexOfChildNode = parentNode.indexOfChildNode(currentNode)
+	}
+
+	if keyIndex >= len(currentNode.keys) || currentNode.keys[keyIndex].key != key {
+		rowPtr, err = deleteHelper(tree, currentNode, currentNode.child[keyIndex], key)
+
+		if err != nil {
+			return -1, err
+		}
+
+	} else if currentNode.leaf {
+		currentNode.keys, rowPtr = removeKeyFromSlice(currentNode.keys, key)
 	} else {
-		i = 0
-		for i < len(treeNode.child) && key != treeNode.keys[i].key {
-			i++
-		}
+		inorderSuccessor := currentNode.getInorderSuccessor(keyIndex)
 
-		// find inorder predessecor and check if has more than minimum number of keys
-		inorderPredecessorNode := treeNode.child[i]
-		for !inorderPredecessorNode.leaf {
-			inorderPredecessorNode = inorderPredecessorNode.child[len(inorderPredecessorNode.child)-1]
-		}
+		currentNode.keys[keyIndex] = inorderSuccessor
 
-		if len(inorderPredecessorNode.keys) > tree.maxElements {
-			treeNode.keys[i] = inorderPredecessorNode.keys[len(inorderPredecessorNode.child)-1]
-			inorderPredecessorNode.keys = popFromSlice(inorderPredecessorNode.keys, len(inorderPredecessorNode.keys)-1)
-		} else if i < len(treeNode.child)-1 {
-			// find inorder successor
-			inorderSuccessorNode := treeNode.child[i+1]
-			for !inorderSuccessorNode.leaf {
-				inorderSuccessorNode = inorderSuccessorNode.child[0]
-			}
+		rowPtr, err = deleteHelper(tree, currentNode, currentNode.child[keyIndex+1], inorderSuccessor.key)
 
-			if len(inorderSuccessorNode.keys) > tree.minElements {
-				treeNode.keys[i] = inorderSuccessorNode.keys[0]
-				inorderSuccessorNode.keys = popFromSlice(inorderSuccessorNode.keys, 0)
-			} else {
-				treeNode.keys[i] = inorderSuccessorNode.keys[0]
-				balancingRequired, offset = tree.deleteHelper(treeNode.child[i+1], inorderSuccessorNode.keys[0].key)
-			}
-			i++ // changed where it was placed check here for likely bug
-		} else {
-			treeNode.keys[i] = inorderPredecessorNode.keys[len(inorderPredecessorNode.child)-1]
-			balancingRequired, offset = tree.deleteHelper(treeNode.child[i], inorderPredecessorNode.keys[len(inorderPredecessorNode.child)-1].key)
+		if err != nil {
+			return -1, err
 		}
 	}
-	// root handling of breaking tree conditions
-	if balancingRequired {
-		// check left sibling
-		if i > 0 && len(treeNode.child[i-1].keys) > tree.minElements {
+
+	if tree.violatesMinimumNumberKeys(currentNode) && parentNode != nil {
+
+		// check if immediate left sibling can be borrowed from
+		if indexOfChildNode > 0 && tree.nodeCanBeBorrowedFrom(parentNode.child[indexOfChildNode-1]) {
 			// rotating keys around to balance tree
-			treeNode.child[i].keys = insertIntoSlice(treeNode.child[i].keys, 0, treeNode.keys[i-1])
-			treeNode.keys[i-1] = treeNode.child[i-1].keys[len(treeNode.child[i-1].keys)-1]
-			treeNode.child[i-1].keys = popFromSlice(treeNode.child[i-1].keys, len(treeNode.child[i-1].keys)-1)
 
-			if !treeNode.child[i].leaf {
+			// when functionin seperate into own function
+			parentNode.child[indexOfChildNode].keys = insertIntoSlice(parentNode.child[indexOfChildNode].keys, 0, parentNode.keys[indexOfChildNode-1])
+			parentNode.keys[indexOfChildNode-1] = parentNode.child[indexOfChildNode-1].keys[len(parentNode.child[indexOfChildNode-1].keys)-1]
+			parentNode.child[indexOfChildNode-1].keys = popFromSlice(parentNode.child[indexOfChildNode-1].keys, len(parentNode.child[indexOfChildNode-1].keys)-1)
+
+			if !parentNode.child[indexOfChildNode].leaf {
 				// handling child treeNode
-				treeNode.child[i].child = insertIntoSlice(treeNode.child[i].child, 0, treeNode.child[i-1].child[len(treeNode.child[i-1].child)-1])
-				treeNode.child[i-1].child = popFromSlice(treeNode.child[i-1].child, len(treeNode.child[i-1].child)-1)
+				parentNode.child[indexOfChildNode].child = insertIntoSlice(parentNode.child[indexOfChildNode].child, 0, parentNode.child[indexOfChildNode-1].child[len(parentNode.child[indexOfChildNode-1].child)-1])
+				parentNode.child[indexOfChildNode-1].child = popFromSlice(parentNode.child[indexOfChildNode-1].child, len(parentNode.child[indexOfChildNode-1].child)-1)
 			}
-
-		} else if i < len(treeNode.keys) && len(treeNode.child[i+1].keys) > tree.minElements {
+		} else if indexOfChildNode+1 < len(parentNode.child) && tree.nodeCanBeBorrowedFrom(parentNode.child[indexOfChildNode+1]) {
 			// rotating keys areound to balance tree
-			treeNode.child[i].keys = append(treeNode.child[i].keys, treeNode.keys[i])
-			treeNode.keys[i] = treeNode.child[i+1].keys[0]
-			treeNode.child[i+1].keys = popFromSlice(treeNode.child[i+1].keys, 0)
 
-			if !treeNode.child[i].leaf {
+			// when functioning seperate into own function
+			parentNode.child[indexOfChildNode].keys = append(parentNode.child[indexOfChildNode].keys, parentNode.keys[indexOfChildNode])
+			parentNode.keys[indexOfChildNode] = parentNode.child[indexOfChildNode+1].keys[0]
+			parentNode.child[indexOfChildNode+1].keys = popFromSlice(parentNode.child[indexOfChildNode+1].keys, 0)
+
+			if !parentNode.child[indexOfChildNode].leaf {
 				// handling child treeNode
-				treeNode.child[i].child = append(treeNode.child[i].child, treeNode.child[i+1].child[0])
-				treeNode.child[i+1].child = popFromSlice(treeNode.child[i+1].child, 0)
+				parentNode.child[indexOfChildNode].child = append(parentNode.child[indexOfChildNode].child, parentNode.child[indexOfChildNode+1].child[0])
+				parentNode.child[indexOfChildNode+1].child = popFromSlice(parentNode.child[indexOfChildNode+1].child, 0)
 			}
-
 		} else {
-			if i > 0 {
-				treeNode.child[i-1].keys = append(treeNode.child[i-1].keys, treeNode.keys[i-1])
-				treeNode.keys = popFromSlice(treeNode.keys, i-1)
-				treeNode.child[i-1].keys = append(treeNode.child[i-1].keys, treeNode.child[i].keys...)
-
-				if !treeNode.child[i].leaf {
-					// handling children
-					treeNode.child[i-1].child = append(treeNode.child[i-1].child, treeNode.child[i].child...)
-				}
-				treeNode.child = popFromSlice(treeNode.child, i)
-			} else {
-				treeNode.child[i].keys = append(treeNode.child[i].keys, treeNode.keys[i])
-				treeNode.keys = popFromSlice(treeNode.keys, i)
-				treeNode.child[i].keys = append(treeNode.child[i].keys, treeNode.child[i+1].keys...)
-
-				if !treeNode.child[i].leaf {
-					// handling children
-					treeNode.child[i].child = append(treeNode.child[i].child, treeNode.child[i+1].child...)
-				}
-				treeNode.child = popFromSlice(treeNode.child, i+1)
-			}
-
-			if len(treeNode.keys) < tree.minElements {
-				return true, offset
-			}
-
+			handleProblemChild(parentNode, indexOfChildNode)
 		}
 	}
-	return false, offset
+
+	return rowPtr, nil
 }
 
-func has(slice []keyStruct, key string) bool {
-	for _, i := range slice {
-		if key == i.key {
-			return true
+func handleProblemChild(parentNode *node, problemChildIndex int) {
+	if problemChildIndex > 0 {
+		parentNode.child[problemChildIndex-1].keys = append(parentNode.child[problemChildIndex-1].keys, parentNode.keys[problemChildIndex-1])
+		parentNode.keys = popFromSlice(parentNode.keys, problemChildIndex-1)
+
+		parentNode.child[problemChildIndex-1].keys = append(parentNode.child[problemChildIndex-1].keys, parentNode.child[problemChildIndex].keys...)
+
+		if !parentNode.child[problemChildIndex].leaf {
+			parentNode.child[problemChildIndex-1].child = append(parentNode.child[problemChildIndex-1].child, parentNode.child[problemChildIndex].child...)
 		}
+
+		parentNode.child = popFromSlice(parentNode.child, problemChildIndex)
+	} else {
+		parentNode.child[problemChildIndex].keys = append(parentNode.child[problemChildIndex].keys, parentNode.keys[problemChildIndex])
+		parentNode.keys = popFromSlice(parentNode.keys, problemChildIndex)
+
+		parentNode.child[problemChildIndex].keys = append(parentNode.child[problemChildIndex].keys, parentNode.child[problemChildIndex+1].keys...)
+
+		if !parentNode.child[problemChildIndex+1].leaf {
+			parentNode.child[problemChildIndex].child = append(parentNode.child[problemChildIndex].child, parentNode.child[problemChildIndex+1].child...)
+		}
+
+		parentNode.child = popFromSlice(parentNode.child, problemChildIndex+1)
 	}
-	return false
 }
 
 func removeKeyFromSlice(slice []keyStruct, key string) ([]keyStruct, int64) {
@@ -245,4 +121,38 @@ func removeKeyFromSlice(slice []keyStruct, key string) ([]keyStruct, int64) {
 
 	offset := slice[i].rowPtr
 	return popFromSlice(slice, i), offset
+}
+
+func (btree *Btree) violatesMinimumNumberKeys(treeNode *node) bool {
+	return btree.minElements > len(treeNode.keys)
+}
+
+func (btree *Btree) nodeCanBeBorrowedFrom(treeNode *node) bool {
+	return btree.minElements < len(treeNode.keys)
+}
+
+// assumes targetNode is actually a child of parentNode
+func (parentNode *node) indexOfChildNode(targetNode *node) int {
+	i := 0
+	for i < len(parentNode.child) && parentNode.child[i] != targetNode {
+		i++
+	}
+	return i
+}
+
+// func (treeNode *node) getInorderPredecessor(keyIndex int) keyStruct {
+// 	inorderPredecessorNode := treeNode.child[keyIndex]
+// 	for !inorderPredecessorNode.leaf {
+// 		inorderPredecessorNode = inorderPredecessorNode.child[len(inorderPredecessorNode.child)-1]
+// 	}
+
+// 	return inorderPredecessorNode.keys[len(inorderPredecessorNode.keys)-1]
+// }
+
+func (treeNode *node) getInorderSuccessor(keyIndex int) keyStruct {
+	inorderSuccessorNode := treeNode.child[keyIndex+1]
+	for !inorderSuccessorNode.leaf {
+		inorderSuccessorNode = inorderSuccessorNode.child[0]
+	}
+	return inorderSuccessorNode.keys[0]
 }
